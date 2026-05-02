@@ -1,0 +1,43 @@
+[project]
+name = "eve-esi-mcp"
+version = "0.1.0"
+description = "Local MCP server exposing EVE Online ESI market, industry, universe, and wormhole tools for profit/opportunity analysis."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "eve-esi-mcp contributors" }]
+dependencies = [
+  "fastmcp>=2.0",
+  "httpx[http2]>=0.27",
+  "hishel>=0.0.30,<1.0",
+  "tenacity>=9.0",
+  "pydantic>=2.7",
+  "pydantic-settings>=2.4",
+  "structlog>=24.1",
+  "python-dotenv>=1.0",
+  "keyring>=25.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+  "respx>=0.21",
+]
+
+[project.scripts]
+eve-esi-mcp = "eve_esi_mcp.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/eve_esi_mcp"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/eve_esi_mcp/data" = "eve_esi_mcp/data"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

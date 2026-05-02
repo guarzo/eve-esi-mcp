@@ -1,0 +1,23 @@
+{
+  "comment": "High-sec and major trade/null regions. Full list available via /universe/regions/. Values: region_id.",
+  "regions": {
+    "The Forge": 10000002,
+    "Domain": 10000043,
+    "Sinq Laison": 10000032,
+    "Heimatar": 10000030,
+    "Metropolis": 10000042,
+    "Essence": 10000064,
+    "Tash-Murkon": 10000020,
+    "Lonetrek": 10000016,
+    "Kador": 10000052,
+    "Genesis": 10000067,
+    "Everyshore": 10000037,
+    "Khanid": 10000049,
+    "Placid": 10000048,
+    "Molden Heath": 10000028,
+    "Black Rise": 10000069,
+    "The Citadel": 10000033,
+    "Derelik": 10000001,
+    "Kor-Azor": 10000065
+  }
+}
