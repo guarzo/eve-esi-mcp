@@ -110,11 +110,13 @@ def build_server() -> FastMCP:
     mcp.tool(sso.sso_login_finish)
     mcp.tool(sso.sso_login)
     mcp.tool(sso.sso_status)
+    mcp.tool(sso.list_characters)
     mcp.tool(sso.sso_logout)
 
     # Character (requires sso_login first)
     mcp.tool(character.my_wallet)
     mcp.tool(character.my_wallet_journal)
+    mcp.tool(character.my_wallet_transactions)
     mcp.tool(character.my_assets)
     mcp.tool(character.my_open_orders)
     mcp.tool(character.my_skills)

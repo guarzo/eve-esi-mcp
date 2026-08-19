@@ -29,7 +29,24 @@ TOKEN_URL = "https://login.eveonline.com/v2/oauth/token"
 VERIFY_URL = "https://login.eveonline.com/oauth/verify"
 
 
-def _token_path() -> Path:
+class CharacterSelectionError(RuntimeError):
+    """Raised when the caller's `character` argument cannot be resolved.
+
+    Carries a structured `detail` so tools can return the available choices to the
+    model rather than surfacing a stack trace it cannot act on.
+    """
+
+    def __init__(self, detail: dict[str, Any]) -> None:
+        super().__init__(detail.get("message", detail.get("error", "character error")))
+        self.detail = detail
+
+
+def _store_path() -> Path:
+    return get_settings().data_dir / "sso_tokens.json"
+
+
+def _legacy_path() -> Path:
+    """Pre-multi-character single-token file. Migrated on first use."""
     return get_settings().data_dir / "sso_token.json"
 
 
@@ -40,25 +57,108 @@ def _pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
-def save_tokens(tokens: dict[str, Any]) -> None:
-    tokens = {**tokens, "saved_at": int(time.time())}
-    path = _token_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(tokens))
+def load_store() -> dict[str, dict[str, Any]]:
+    """All logged-in characters, keyed by character_id as a string."""
+    path = _store_path()
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text()).get("characters", {})
+    except (json.JSONDecodeError, OSError):
+        log.warning("sso.store_unreadable", path=str(path))
+        return {}
+
+
+def save_store(store: dict[str, dict[str, Any]]) -> None:
+    path = _store_path()
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.write_text(json.dumps({"characters": store}, indent=2))
     path.chmod(0o600)
 
 
-def load_tokens() -> dict[str, Any] | None:
-    path = _token_path()
-    if not path.exists():
-        return None
-    return json.loads(path.read_text())
+def save_character(
+    character_id: int,
+    character_name: str,
+    tokens: dict[str, Any],
+    scope: str = "",
+) -> None:
+    """Add or replace one character. Other characters are left untouched."""
+    store = load_store()
+    store[str(character_id)] = {
+        **tokens,
+        "character_id": int(character_id),
+        "character_name": character_name,
+        "scope": scope or tokens.get("scope", ""),
+        "saved_at": tokens.get("saved_at") or int(time.time()),
+    }
+    save_store(store)
 
 
-def clear_tokens() -> None:
-    path = _token_path()
-    if path.exists():
-        path.unlink()
+def clear_tokens(character_id: int | None = None) -> int:
+    """Log out one character, or all of them. Returns how many were removed."""
+    store = load_store()
+    if character_id is None:
+        removed = len(store)
+        save_store({})
+        _legacy_path().unlink(missing_ok=True)
+        return removed
+    if store.pop(str(character_id), None) is None:
+        return 0
+    save_store(store)
+    return 1
+
+
+def migrate_legacy_token(character_id: int, character_name: str) -> bool:
+    """Fold a pre-multi-character sso_token.json into the store.
+
+    Identity isn't in the token file, so the caller supplies it (from _verify).
+    Returns True if a migration happened.
+    """
+    legacy = _legacy_path()
+    if not legacy.exists():
+        return False
+    try:
+        tokens = json.loads(legacy.read_text())
+    except (json.JSONDecodeError, OSError):
+        log.warning("sso.legacy_unreadable", path=str(legacy))
+        legacy.unlink(missing_ok=True)
+        return False
+    save_character(
+        character_id=character_id,
+        character_name=character_name,
+        tokens=tokens,
+        scope=tokens.get("scope", ""),
+    )
+    legacy.unlink(missing_ok=True)
+    log.info("sso.migrated_legacy_token", character_id=character_id)
+    return True
+
+
+async def _adopt_legacy_if_present() -> None:
+    """Best-effort migration: identify the legacy token, then fold it in."""
+    legacy = _legacy_path()
+    if not legacy.exists():
+        return
+    try:
+        tokens = json.loads(legacy.read_text())
+    except (json.JSONDecodeError, OSError):
+        legacy.unlink(missing_ok=True)
+        return
+    access = tokens.get("access_token")
+    verified = await _verify(access) if access else {"error": "no access token"}
+    char_id = verified.get("CharacterID")
+    if not char_id:
+        # Access token expired; try the refresh token before giving up.
+        refreshed = await _refresh(tokens)
+        if refreshed:
+            verified = await _verify(refreshed["access_token"])
+            char_id = verified.get("CharacterID")
+            tokens = refreshed
+    if not char_id:
+        log.warning("sso.legacy_migration_failed", note="re-run sso_login")
+        legacy.unlink(missing_ok=True)
+        return
+    migrate_legacy_token(int(char_id), verified.get("CharacterName", "unknown"))
 
 
 class _CodeHandler(BaseHTTPRequestHandler):
@@ -260,13 +360,28 @@ async def sso_login_finish(timeout_seconds: int = 300) -> dict[str, Any]:
     tokens = r.json()
     scope_str = _login_state.get("scope_str", "")
     tokens["scope"] = scope_str
-    save_tokens(tokens)
     verified = await _verify(tokens["access_token"])
     _login_state.clear()
+
+    char_id = verified.get("CharacterID")
+    if not char_id:
+        return {"error": f"could not identify character: {verified}"}
+
+    # Add this character alongside any already logged in, rather than replacing.
+    save_character(
+        character_id=int(char_id),
+        character_name=verified.get("CharacterName", "unknown"),
+        tokens=tokens,
+        scope=scope_str,
+    )
+    store = load_store()
     return {
         "status": "logged_in",
+        "character_id": int(char_id),
+        "character_name": verified.get("CharacterName", "unknown"),
         "character": verified,
         "scopes": scope_str.split(),
+        "logged_in_characters": len(store),
     }
 
 
@@ -292,34 +407,114 @@ async def _verify(access_token: str) -> dict[str, Any]:
 
 
 async def sso_status() -> dict[str, Any]:
-    tokens = load_tokens()
-    if not tokens:
-        return {"logged_in": False}
-    access = await get_valid_access_token()
-    if not access:
-        return {"logged_in": False, "note": "refresh failed; run sso_login again"}
-    verified = await _verify(access)
-    return {"logged_in": True, "character": verified, "scopes": tokens.get("scope", "").split()}
+    """Every logged-in character, with scopes and token expiry."""
+    await _adopt_legacy_if_present()
+    store = load_store()
+    if not store:
+        return {"logged_in": False, "characters": []}
+    now = int(time.time())
+    return {
+        "logged_in": True,
+        "character_count": len(store),
+        "characters": [
+            {
+                "character_id": rec["character_id"],
+                "character_name": rec.get("character_name", "unknown"),
+                "scopes": (rec.get("scope") or "").split(),
+                "token_expires_in_seconds": max(
+                    0, rec.get("saved_at", 0) + rec.get("expires_in", 0) - now
+                ),
+            }
+            for rec in store.values()
+        ],
+    }
 
 
-async def sso_logout() -> dict[str, Any]:
-    clear_tokens()
-    return {"status": "logged_out"}
+async def sso_logout(character_id: int | None = None) -> dict[str, Any]:
+    """Log out one character, or every character when called with no argument."""
+    removed = clear_tokens(character_id=character_id)
+    return {
+        "status": "logged_out",
+        "removed": removed,
+        "scope": "one" if character_id is not None else "all",
+        "remaining": len(load_store()),
+    }
 
 
-async def get_valid_access_token() -> str | None:
-    """Return an access_token, refreshing if needed. None if not logged in."""
-    settings = get_settings()
-    tokens = load_tokens()
-    if not tokens:
-        return None
+async def list_characters() -> list[dict[str, Any]]:
+    """Logged-in characters available to the `character` argument on other tools."""
+    await _adopt_legacy_if_present()
+    return [
+        {
+            "character_id": rec["character_id"],
+            "character_name": rec.get("character_name", "unknown"),
+            "scopes": (rec.get("scope") or "").split(),
+        }
+        for rec in load_store().values()
+    ]
 
-    expires_in = tokens.get("expires_in", 1200)
-    saved_at = tokens.get("saved_at", 0)
-    if time.time() < saved_at + expires_in - 60:
-        return tokens.get("access_token")
 
-    refresh = tokens.get("refresh_token")
+def _summarise(store: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "character_id": r["character_id"],
+            "character_name": r.get("character_name", "unknown"),
+        }
+        for r in store.values()
+    ]
+
+
+async def resolve_character(character: int | str | None = None) -> dict[str, Any]:
+    """Pick which logged-in character a call applies to.
+
+    None + exactly one character logged in -> that character. None + several ->
+    CharacterSelectionError listing the choices, so the model can pick rather than
+    silently getting whichever happens to be first.
+    """
+    await _adopt_legacy_if_present()
+    store = load_store()
+    if not store:
+        raise CharacterSelectionError(
+            {
+                "error": "not_logged_in",
+                "message": "No characters are logged in. Run sso_login_start / sso_login_finish.",
+                "available_characters": [],
+            }
+        )
+
+    if character is None:
+        if len(store) == 1:
+            return next(iter(store.values()))
+        raise CharacterSelectionError(
+            {
+                "error": "ambiguous_character",
+                "message": (
+                    f"{len(store)} characters are logged in. Pass `character` "
+                    f"(id or name) to choose one."
+                ),
+                "available_characters": _summarise(store),
+            }
+        )
+
+    key = str(character)
+    if key in store:
+        return store[key]
+    wanted = key.casefold()
+    for rec in store.values():
+        if str(rec.get("character_name", "")).casefold() == wanted:
+            return rec
+    raise CharacterSelectionError(
+        {
+            "error": "unknown_character",
+            "message": f"No logged-in character matches {character!r}.",
+            "available_characters": _summarise(store),
+        }
+    )
+
+
+async def _refresh(rec: dict[str, Any]) -> dict[str, Any] | None:
+    """Exchange a refresh token for a fresh access token. None if it failed."""
+    refresh = rec.get("refresh_token")
     if not refresh:
         return None
     async with httpx.AsyncClient(timeout=15) as c:
@@ -328,7 +523,7 @@ async def get_valid_access_token() -> str | None:
             data={
                 "grant_type": "refresh_token",
                 "refresh_token": refresh,
-                "client_id": settings.sso_client_id,
+                "client_id": get_settings().sso_client_id,
             },
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
@@ -336,15 +531,40 @@ async def get_valid_access_token() -> str | None:
         log.warning("sso.refresh_failed", status=r.status_code, body=r.text[:200])
         return None
     new_tokens = r.json()
-    new_tokens["scope"] = tokens.get("scope")
-    save_tokens(new_tokens)
+    new_tokens["scope"] = rec.get("scope", "")
+    new_tokens["saved_at"] = int(time.time())
+    return new_tokens
+
+
+async def get_valid_access_token(character: int | str | None = None) -> str | None:
+    """Access token for the selected character, refreshing if near expiry."""
+    try:
+        rec = await resolve_character(character)
+    except CharacterSelectionError:
+        return None
+
+    if time.time() < rec.get("saved_at", 0) + rec.get("expires_in", 1200) - 60:
+        return rec.get("access_token")
+
+    new_tokens = await _refresh(rec)
+    if not new_tokens:
+        return None
+    save_character(
+        character_id=rec["character_id"],
+        character_name=rec.get("character_name", "unknown"),
+        tokens=new_tokens,
+        scope=rec.get("scope", ""),
+    )
     return new_tokens.get("access_token")
 
 
-async def character_id() -> int | None:
-    access = await get_valid_access_token()
-    if not access:
+async def character_id(character: int | str | None = None) -> int | None:
+    """character_id of the selected character, without a network round-trip.
+
+    The identity is recorded at login, so this no longer calls the deprecated
+    /oauth/verify on every authenticated tool call.
+    """
+    try:
+        return int((await resolve_character(character))["character_id"])
+    except (CharacterSelectionError, KeyError, TypeError, ValueError):
         return None
-    data = await _verify(access)
-    char_id = data.get("CharacterID")
-    return int(char_id) if char_id else None

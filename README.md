@@ -149,10 +149,49 @@ These require a logged-in character. Register a developer app at
 `http://localhost:8765/callback`. Then set `EVE_SSO_CLIENT_ID` in `.env` and:
 
 - `sso_login()` — opens the EVE SSO auth URL, captures the code on localhost
-- `sso_status()`, `sso_logout()`
-- `my_wallet()`, `my_wallet_journal(limit?)`, `my_assets(limit?)`, `my_open_orders(limit?)`, `my_skills()`, `my_industry_jobs(include_completed?, limit?)`
+- `sso_status()` — every logged-in character, with scopes and token expiry
+- `list_characters()` — ids and names accepted by the `character` argument below
+- `sso_logout(character_id?)` — one character, or all of them when omitted
+- `my_wallet(character?)`, `my_wallet_journal(character?, limit?, complete?)`,
+  `my_wallet_transactions(character?, limit?, complete?)`,
+  `my_assets(character?, limit?, complete?)`, `my_open_orders(character?, limit?, complete?)`,
+  `my_skills(character?)`, `my_industry_jobs(character?, include_completed?, limit?, complete?)`
 
-Refresh tokens are stored at `$XDG_DATA_HOME/eve-esi-mcp/sso_token.json` with mode `0600`.
+### Multiple characters
+
+Logging in a second character *adds* it rather than replacing the first. Pass
+`character=` (id or name, case-insensitive) to choose. With exactly one character
+logged in it can be omitted; with several, omitting it returns a structured
+`ambiguous_character` error listing the choices rather than silently picking one:
+
+```json
+{ "error": "ambiguous_character", "available_characters": [
+    {"character_id": 1001, "character_name": "Alice"},
+    {"character_id": 1002, "character_name": "Bob"}] }
+```
+
+Refresh tokens live in `$XDG_DATA_HOME/eve-esi-mcp/sso_tokens.json`, mode `0600`, in a
+`0700` directory. An older single-character `sso_token.json` is migrated automatically on
+first use.
+
+### `complete=` and ESI's retention limits
+
+The row caps above are tuned for a model reading an answer. A program *ingesting* these
+tools (a P&L tracker, say) needs completeness instead — 200 of 4,000 transactions silently
+becomes a wrong average cost. Pass `complete=True` for a guarantee of `truncated: false`
+or a hard error; it never returns a quiet partial.
+
+Completeness only reaches as far as ESI retains, which is less than people expect:
+
+| Endpoint | Retention |
+|---|---|
+| `my_wallet_journal` | **30 days** |
+| `my_industry_jobs(include_completed=True)` | **90 days** |
+| `my_wallet_transactions` | cursor-walked back as far as ESI serves |
+
+Anything longer has to be polled on a schedule and stored locally — it cannot be
+backfilled later. `my_wallet_transactions` also paginates on a `from_id` cursor rather
+than `X-Pages`, so a naive client silently reads the first page forever.
 
 ## Example model prompts
 
