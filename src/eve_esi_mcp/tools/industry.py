@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from ..esi_client import get_client
-from .market import market_prices
+from ..limits import capped, tool_limit
+from .market import _all_market_prices
 from .universe import jumps_between
 
 Activity = Literal[
@@ -16,11 +17,12 @@ Activity = Literal[
 ]
 
 
-async def industry_systems(activity: Activity | None = None) -> list[dict[str, Any]]:
-    """Cost indices per system from /industry/systems/.
+async def _industry_systems_raw(
+    activity: Activity | None = None,
+) -> list[dict[str, Any]]:
+    """Unbounded cost-index rows, for internal callers. Not exposed as a tool.
 
-    Each entry: {solar_system_id, cost_indices: [{activity, cost_index}, ...]}.
-    If `activity` is given, rows are reshaped to {system_id, cost_index}.
+    The full payload is ~1.9 MB (~489k tokens), so nothing model-facing returns it whole.
     """
     raw = await get_client().get_json("/industry/systems/")
     if activity is None:
@@ -40,6 +42,22 @@ async def industry_systems(activity: Activity | None = None) -> list[dict[str, A
     return out
 
 
+async def industry_systems(
+    activity: Activity | None = None,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    """Manufacturing/research cost indices per system from /industry/systems/.
+
+    With `activity`, rows are reshaped to {solar_system_id, cost_index} and sorted
+    cheapest-first — so a small `limit` still answers "where is it cheapest to build".
+    Without it you get raw {solar_system_id, cost_indices: [...]} rows in ESI order.
+
+    For the common question, prefer cheapest_system(activity), which is bounded by design.
+    """
+    rows = await _industry_systems_raw(activity=activity)
+    return capped(rows, limit=tool_limit(limit), extra={"activity": activity})
+
+
 async def cheapest_system(
     activity: Activity,
     limit: int = 25,
@@ -50,7 +68,7 @@ async def cheapest_system(
     If `nearest_to` is a system_id, results include jumps from that system (slow —
     ESI route calls fan out; be sensible with limits).
     """
-    rows = await industry_systems(activity=activity)
+    rows = await _industry_systems_raw(activity=activity)
     top = rows[: max(limit, 1)]
     if nearest_to is None:
         return top
@@ -83,7 +101,7 @@ async def build_cost_estimate(
     Returns estimated install cost + materials cost at /markets/prices/ adjusted prices.
     The "adjusted_price" from ESI is specifically what CCP uses for EIV.
     """
-    prices = {p["type_id"]: p for p in await market_prices()}
+    prices = {p["type_id"]: p for p in await _all_market_prices()}
     material_cost = 0.0
     rows = []
     me_mult = (1 - me_pct / 100) * facility_bonus_pct
@@ -104,7 +122,7 @@ async def build_cost_estimate(
         )
 
     # Install cost = EIV * cost_index * (1 + system_tax + facility_tax)
-    idx_rows = await industry_systems(activity="manufacturing")
+    idx_rows = await _industry_systems_raw(activity="manufacturing")
     ci = next((r["cost_index"] for r in idx_rows if r["solar_system_id"] == system_id), 0.0)
     eiv = material_cost
     install_cost = eiv * ci * (1 + job_tax_pct / 100)

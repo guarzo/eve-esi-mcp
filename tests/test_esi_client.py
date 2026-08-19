@@ -24,7 +24,7 @@ def client(tmp_path, monkeypatch):
 
 
 async def test_get_json_ok(client):
-    with respx.mock(base_url="https://esi.evetech.net/latest") as router:
+    with respx.mock(base_url="https://esi.evetech.net") as router:
         router.get("/universe/regions/").mock(
             return_value=httpx.Response(200, json=[10000002, 10000043])
         )
@@ -33,7 +33,7 @@ async def test_get_json_ok(client):
 
 
 async def test_pagination_walks_all_pages(client):
-    with respx.mock(base_url="https://esi.evetech.net/latest") as router:
+    with respx.mock(base_url="https://esi.evetech.net") as router:
         router.get("/markets/10000002/orders/", params={"page": 1, "order_type": "all"}).mock(
             return_value=httpx.Response(
                 200,
@@ -55,7 +55,7 @@ async def test_pagination_walks_all_pages(client):
 
 
 async def test_420_raises_and_is_retryable(client):
-    with respx.mock(base_url="https://esi.evetech.net/latest") as router:
+    with respx.mock(base_url="https://esi.evetech.net") as router:
         router.get("/universe/regions/").mock(
             return_value=httpx.Response(
                 420,
@@ -72,7 +72,7 @@ async def test_420_raises_and_is_retryable(client):
 
 
 async def test_4xx_not_retried(client):
-    with respx.mock(base_url="https://esi.evetech.net/latest") as router:
+    with respx.mock(base_url="https://esi.evetech.net") as router:
         route = router.get("/universe/systems/999/").mock(
             return_value=httpx.Response(404, text="not found")
         )

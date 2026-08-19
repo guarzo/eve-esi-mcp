@@ -2,8 +2,16 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from ..esi_client import get_client
+from ..esi_client import ESIError, get_client
 from ..ids import resolve_ids_bulk, resolve_names_bulk
+
+# ESI renamed the route security options when GET became POST. The friendly names are
+# kept on this tool's surface; these are the wire values it now expects.
+_ROUTE_PREFERENCE = {
+    "shortest": "Shorter",
+    "secure": "Safer",
+    "insecure": "LessSecure",
+}
 
 
 async def resolve_names(ids: list[int]) -> list[dict[str, Any]]:
@@ -52,13 +60,29 @@ async def route(
     `flag=secure` prefers hi-sec; `insecure` prefers low/null. Wormholes are NOT
     considered — ESI only knows gate connections.
     """
-    params: dict[str, Any] = {"flag": flag}
+    # ESI replaced GET /route/{o}/{d}/ with POST at compatibility date 2025-09-30. The
+    # GET form 404s at any newer date; options moved from query params into the body
+    # under new names, and the response is now {"route": [...]} not a bare array.
+    #
+    # Unknown body keys are NOT rejected — ESI returns a null route instead — so the
+    # names here have to be exactly right or this fails silently.
+    body: dict[str, Any] = {"preference": _ROUTE_PREFERENCE[flag]}
     if avoid:
-        params["avoid"] = ",".join(str(a) for a in avoid)
-    return await get_client().get_json(
+        body["avoid_systems"] = list(avoid)
+
+    payload = await get_client().post_json(
         f"/route/{origin}/{destination}/",
-        params=params,
+        json=body,
     )
+    route_systems = payload.get("route") if isinstance(payload, dict) else payload
+    if not route_systems:
+        raise ESIError(
+            200,
+            f"ESI returned no route from {origin} to {destination} "
+            f"(preference={body['preference']}, avoid={len(avoid or [])} systems)",
+            f"/route/{origin}/{destination}/",
+        )
+    return route_systems
 
 
 async def jumps_between(origin: int, destination: int) -> int:

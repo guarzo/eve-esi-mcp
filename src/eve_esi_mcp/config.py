@@ -36,7 +36,16 @@ class Settings(BaseSettings):
     app_version: str = Field(default="0.1.0")
     cache_dir: Path = Field(default_factory=_default_cache_dir)
     data_dir: Path = Field(default_factory=_default_data_dir)
-    base_url: str = Field(default="https://esi.evetech.net/latest")
+    base_url: str = Field(default="https://esi.evetech.net")
+    compatibility_date: str = Field(
+        default="2026-08-18",
+        description=(
+            "Sent as X-Compatibility-Date. ESI versions by date rather than by path; "
+            "omitting the header pins you to 2020-01-01. Valid values are published at "
+            "https://esi.evetech.net/meta/compatibility-dates — bumping this can change "
+            "response shapes, so check /meta/changelog first."
+        ),
+    )
     page_concurrency: int = Field(default=8, ge=1, le=32)
     error_limit_floor: int = Field(
         default=10,
@@ -55,7 +64,7 @@ class Settings(BaseSettings):
 
     def user_agent(self) -> str:
         contact = self.contact.strip() or "no-contact-set"
-        return f"{self.app_name}/{self.app_version} ({contact}) +https://github.com/"
+        return f"{self.app_name}/{self.app_version} ({contact})"
 
 
 _settings: Settings | None = None
@@ -65,6 +74,10 @@ def get_settings() -> Settings:
     global _settings
     if _settings is None:
         _settings = Settings()
-        _settings.cache_dir.mkdir(parents=True, exist_ok=True)
-        _settings.data_dir.mkdir(parents=True, exist_ok=True)
+        # 0700: these directories hold ESI response bodies and SSO token material.
+        _settings.cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        _settings.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        # mkdir's mode is ignored when the directory already exists.
+        _settings.cache_dir.chmod(0o700)
+        _settings.data_dir.chmod(0o700)
     return _settings

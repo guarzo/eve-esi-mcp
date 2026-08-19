@@ -46,21 +46,39 @@ class ESIClient:
             storage=storage,
             controller=controller,
         )
+        common_headers = {
+            "User-Agent": settings.user_agent(),
+            "Accept": "application/json",
+            # ESI versions by date, not by path. Without this header every response is
+            # served as of compatibility date 2020-01-01 regardless of the base URL.
+            "X-Compatibility-Date": settings.compatibility_date,
+        }
         self._client = httpx.AsyncClient(
             base_url=settings.base_url,
             transport=transport,
             timeout=httpx.Timeout(30.0, connect=10.0),
-            headers={
-                "User-Agent": settings.user_agent(),
-                "Accept": "application/json",
-            },
+            headers=common_headers,
+        )
+        # Authenticated responses deliberately bypass the disk cache. hishel keys on
+        # method + URL + body only, so a cached /characters/{id}/wallet/ body would be
+        # replayed to any later caller of that URL — and it sits on disk besides.
+        self._auth_client = httpx.AsyncClient(
+            base_url=settings.base_url,
+            transport=httpx.AsyncHTTPTransport(http2=True, retries=0),
+            timeout=httpx.Timeout(30.0, connect=10.0),
+            headers=common_headers,
         )
         # Guards concurrent error-limit waiters so we don't stampede.
         self._error_limit_lock = asyncio.Lock()
         self._error_limit_wait_until: float = 0.0
 
+    def _http(self, auth_token: str | None) -> httpx.AsyncClient:
+        """Cached client for public data; uncached one for anything token-bearing."""
+        return self._auth_client if auth_token else self._client
+
     async def aclose(self) -> None:
         await self._client.aclose()
+        await self._auth_client.aclose()
 
     # ---- core request ------------------------------------------------------
 
@@ -84,7 +102,9 @@ class ESIClient:
             retry=retry_if_exception(_is_retryable),
         ):
             with attempt:
-                resp = await self._client.get(path, params=params, headers=headers)
+                resp = await self._http(auth_token).get(
+                    path, params=params, headers=headers
+                )
                 self._update_error_limit(resp)
                 if resp.status_code >= 500 or resp.status_code == 420:
                     raise ESIError(resp.status_code, resp.text[:200], str(resp.request.url))
@@ -116,7 +136,9 @@ class ESIClient:
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if auth_token:
             headers["Authorization"] = f"Bearer {auth_token}"
-        resp = await self._client.post(path, params=params, json=json, headers=headers)
+        resp = await self._http(auth_token).post(
+            path, params=params, json=json, headers=headers
+        )
         self._update_error_limit(resp)
         if resp.status_code >= 400:
             raise ESIError(resp.status_code, resp.text[:500], str(resp.request.url))

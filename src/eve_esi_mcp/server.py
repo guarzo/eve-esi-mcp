@@ -45,13 +45,20 @@ def build_server() -> FastMCP:
             "Tools for EVE Online's ESI API: regional market orders/history, "
             "arbitrage comparison across trade hubs, industry cost indices and "
             "build-cost estimation, universe lookups, system kills/jumps activity, "
-            "sovereignty map, wormhole/J-space static info, and optional EVE SSO "
-            "character-scoped tools (wallet/assets/orders). "
+            "sovereignty claims, wormhole/J-space static info, and optional EVE SSO "
+            "character-scoped tools (wallet/assets/orders/industry jobs). "
             "Common profit workflows: "
             "(1) resolve_ids([item_name]) → compare_hubs(type_id) to find a spread; "
             "(2) find_spreads(src, dst, candidate_type_ids) to scan a watchlist; "
-            "(3) industry_systems('manufacturing') → build_cost_estimate to sanity-check a build; "
+            "(3) cheapest_system('manufacturing') → build_cost_estimate to sanity-check a build; "
             "(4) hottest_systems('ship_kills') to avoid dangerous routes. "
+            "Prefer the narrow tool over the broad one: best_bid_ask over raw market_orders, "
+            "cheapest_system over industry_systems, hottest_systems over system_kills. "
+            "Always pass type_id to market_orders — an unfiltered region scan is hundreds "
+            "of pages and returns only the first by default. "
+            "Any result carrying \"truncated\": true is a partial dataset; do not treat it "
+            "as complete. PLEX (type_id 44992) trades only on the global market, region "
+            "19000001; market tools redirect there automatically and say so. "
             "Always respect ESI cache — repeated calls within the Expires window "
             "hit local disk, not the API."
         ),
@@ -89,7 +96,7 @@ def build_server() -> FastMCP:
     # Activity
     mcp.tool(activity.system_kills)
     mcp.tool(activity.system_jumps)
-    mcp.tool(activity.sovereignty_map)
+    mcp.tool(activity.sovereignty_systems)
     mcp.tool(activity.sovereignty_campaigns)
     mcp.tool(activity.hottest_systems)
 

@@ -8,7 +8,7 @@ your own character's wallet/assets/orders via EVE SSO.
 
 The goal is turning questions like:
 
-- *"What's the Jita→Amarr spread on PLEX right now, and is it worth hauling after fees?"*
+- *"What's the Jita→Amarr spread on Tritanium right now, and is it worth hauling after fees?"*
 - *"Which system has the cheapest manufacturing cost index this week, within 10 jumps of Jita?"*
 - *"Which low-sec systems are hottest by ship kills right now — avoid this route."*
 - *"What's the static chain for a C5 wolf-rayet wormhole?"*
@@ -20,10 +20,45 @@ The goal is turning questions like:
 This server follows CCP's [ESI best practices](https://developers.eveonline.com/docs/services/esi/best-practices/):
 
 - **User-Agent** built from `EVE_ESI_MCP_CONTACT` (required — the server refuses to start without it).
+- **Compatibility date** — every request sends `X-Compatibility-Date` (default `2026-08-18`).
+  ESI versions by date rather than by URL path; without the header you are silently served
+  the `2020-01-01` view of the API. Override with `EVE_ESI_MCP_COMPATIBILITY_DATE`, and
+  check [`/meta/changelog`](https://esi.evetech.net/meta/changelog) before bumping it —
+  response shapes change between dates.
 - **HTTP caching** via `hishel` on disk, honouring `Expires` and `ETag` responses; repeated calls within the cache window never hit CCP.
+- **Authenticated responses are never cached** — hishel keys on method + URL + body only,
+  so a cached `/characters/{id}/wallet/` body would be replayed to any later caller of that
+  URL. Token-bearing requests use a separate uncached client, and the cache and data
+  directories are created `0700`.
 - **Error-limit awareness** — reads `X-ESI-Error-Limit-Remain`/`Reset` after every response and sleeps when low; 420s back off with exponential jitter.
 - **Pagination** — `X-Pages` walked with bounded concurrency and jitter.
 - **Read-only** — no write endpoints wired up.
+
+## Response size
+
+Several ESI endpoints return the entire universe in one response — `/markets/prices/` is
+~15,800 rows and `/industry/systems/` ~5,500, each far larger than a model's context
+window. Tools that touch those endpoints return an envelope rather than a bare list:
+
+```json
+{ "items": [...], "returned": 200, "total": 15817, "truncated": true, "note": "Showing 200 of 15817 rows..." }
+```
+
+Truncation is always visible. A silently shortened list is worse than a large one, because
+the model treats a partial answer as a complete one and reasons confidently from it. Raise
+`limit` (up to 5000) or narrow the query to see more.
+
+Prefer the narrow tool over the broad one: `best_bid_ask` over raw `market_orders`,
+`cheapest_system` over `industry_systems`, `hottest_systems` over `system_kills`. Always
+pass `type_id` to `market_orders` — an unfiltered region scan is ~414 pages in The Forge
+and returns only the first by default.
+
+## Globally-traded items
+
+PLEX (`type_id` 44992) trades on a single cross-cluster market, region `19000001`, not
+per-region. Asking for it in The Forge returns an empty order book and a stale history
+stub — which reads as "illiquid here" rather than "wrong region". The market tools detect
+these types, query the global market instead, and report the redirect in the response.
 
 ## Install / run
 
@@ -65,9 +100,9 @@ uvx --from . eve-esi-mcp
 
 ### Market
 
-- `market_orders(region, type_id?, order_type, location_id?, page_limit?)`
+- `market_orders(region, type_id?, order_type, location_id?, page_limit?, limit?)`
 - `market_history(region, type_id)` — 400 days of daily OHLC-ish
-- `market_prices()` — global average + adjusted price
+- `market_prices(type_ids?, limit?)` — global average + adjusted price; pass `type_ids` to price specific items exactly
 - `best_bid_ask(region, type_id)` — top bid/ask, spread, 7d liquidity
 - `top_traded(region, type_ids[], days, limit)` — rank a watchlist by ISK turnover
 
@@ -80,7 +115,7 @@ uvx --from . eve-esi-mcp
 
 ### Industry
 
-- `industry_systems(activity?)` — cost indices per system
+- `industry_systems(activity?, limit?)` — cost indices per system
 - `cheapest_system(activity, limit, nearest_to?)` — rank + optional jump distance
 - `build_cost_estimate(product_type_id, materials[], system_id, runs, me_pct, job_tax_pct, facility_bonus_pct)` — EIV-style
 
@@ -92,9 +127,9 @@ uvx --from . eve-esi-mcp
 
 ### Activity
 
-- `system_kills()` / `system_jumps()` — last-hour heat map
+- `system_kills(limit)` / `system_jumps(limit)` — last-hour heat map
 - `hottest_systems(kind, limit)`
-- `sovereignty_map()` / `sovereignty_campaigns()`
+- `sovereignty_systems(limit)` / `sovereignty_campaigns()`
 
 ### Wormhole / J-space
 
@@ -115,16 +150,19 @@ These require a logged-in character. Register a developer app at
 
 - `sso_login()` — opens the EVE SSO auth URL, captures the code on localhost
 - `sso_status()`, `sso_logout()`
-- `my_wallet()`, `my_wallet_journal()`, `my_assets()`, `my_open_orders()`, `my_skills()`, `my_industry_jobs()`
+- `my_wallet()`, `my_wallet_journal(limit?)`, `my_assets(limit?)`, `my_open_orders(limit?)`, `my_skills()`, `my_industry_jobs(include_completed?, limit?)`
 
 Refresh tokens are stored at `$XDG_DATA_HOME/eve-esi-mcp/sso_token.json` with mode `0600`.
 
 ## Example model prompts
 
-> *"Is PLEX currently a profitable Jita→Amarr haul? Assume 150k m3 on 5B collateral at 1000 isk/m3 and standard broker/tax."*
+> *"Is Tritanium currently a profitable Jita→Amarr haul? Assume 150k m3 on 5B collateral at 1000 isk/m3 and standard broker/tax."*
 
-The model should: `resolve_ids(["PLEX"])` → `compare_hubs(type_id)` →
+The model should: `resolve_ids(["Tritanium"])` → `compare_hubs(type_id)` →
 `freight_cost(...)` → `profit_after_fees(...)` and summarise.
+
+(Asking the same question about PLEX returns a single `global` row and an explicit
+note: PLEX has one cluster-wide order book, so there is no inter-hub spread to haul.)
 
 > *"Find me manufacturing candidates: systems within 8 jumps of Jita with the lowest manufacturing cost index."*
 

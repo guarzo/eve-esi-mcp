@@ -8,10 +8,25 @@ from typing import Any
 from .esi_client import get_client
 
 
+# PLEX and other account-services items trade on a single cross-cluster market rather
+# than per-region. Asking for them in The Forge returns an empty order book and a stale
+# history stub, which reads as "illiquid here" rather than "you asked the wrong region".
+GLOBAL_MARKET_REGION_ID = 19000001
+
+# type_ids known to trade only on the global market.
+GLOBAL_MARKET_TYPE_IDS = frozenset({44992})  # PLEX
+
+
+def is_global_market_type(type_id: int | None) -> bool:
+    return type_id is not None and type_id in GLOBAL_MARKET_TYPE_IDS
+
+
 @lru_cache(maxsize=1)
 def load_regions() -> dict[str, int]:
     with resources.files("eve_esi_mcp.data").joinpath("regions.json").open("r") as f:
-        return json.load(f)["regions"]
+        regions: dict[str, int] = json.load(f)["regions"]
+        regions.setdefault("Global", GLOBAL_MARKET_REGION_ID)
+        return regions
 
 
 @lru_cache(maxsize=1)
@@ -31,6 +46,10 @@ def region_id(region: str | int) -> int:
     lower = {k.lower(): v for k, v in regions.items()}
     if region.lower() in lower:
         return lower[region.lower()]
+    # Traders think in hubs ("Jita"), not regions ("The Forge"). Accept either.
+    hubs = load_hubs()
+    if region.lower() in hubs:
+        return int(hubs[region.lower()]["region_id"])
     raise ValueError(
         f"Unknown region '{region}'. Known: {sorted(regions)} — or call resolve_ids(['{region}'])."
     )

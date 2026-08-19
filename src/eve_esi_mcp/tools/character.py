@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..esi_client import get_client
+from ..limits import capped, tool_limit
 from ..sso import character_id, get_valid_access_token
 
 
@@ -23,27 +24,35 @@ async def my_wallet() -> dict[str, Any]:
     return {"character_id": cid, "balance_isk": balance}
 
 
-async def my_wallet_journal() -> list[dict[str, Any]]:
+async def my_wallet_journal(limit: int | None = None) -> dict[str, Any]:
+    """Recent wallet transactions, newest first (ESI returns them in that order)."""
     token, cid = await _auth()
-    return await get_client().get_all_pages(
+    rows = await get_client().get_all_pages(
         f"/characters/{cid}/wallet/journal/", auth_token=token
     )
+    return capped(rows, limit=tool_limit(limit), extra={"character_id": cid})
 
 
-async def my_assets() -> list[dict[str, Any]]:
-    """All assets the character owns (requires esi-assets.read_assets.v1)."""
+async def my_assets(limit: int | None = None) -> dict[str, Any]:
+    """Assets the character owns (requires esi-assets.read_assets.v1).
+
+    A hoarder's asset list runs to tens of thousands of rows, so this is capped;
+    the envelope reports the true total.
+    """
     token, cid = await _auth()
-    return await get_client().get_all_pages(
+    rows = await get_client().get_all_pages(
         f"/characters/{cid}/assets/", auth_token=token
     )
+    return capped(rows, limit=tool_limit(limit), extra={"character_id": cid})
 
 
-async def my_open_orders() -> list[dict[str, Any]]:
+async def my_open_orders(limit: int | None = None) -> dict[str, Any]:
     """Open market orders (requires esi-markets.read_character_orders.v1)."""
     token, cid = await _auth()
-    return await get_client().get_json(
+    rows = await get_client().get_json(
         f"/characters/{cid}/orders/", auth_token=token
     )
+    return capped(rows, limit=tool_limit(limit), extra={"character_id": cid})
 
 
 async def my_skills() -> dict[str, Any]:
@@ -55,11 +64,15 @@ async def my_skills() -> dict[str, Any]:
     )
 
 
-async def my_industry_jobs(include_completed: bool = False) -> list[dict[str, Any]]:
+async def my_industry_jobs(
+    include_completed: bool = False,
+    limit: int | None = None,
+) -> dict[str, Any]:
     """Industry jobs (requires esi-industry.read_character_jobs.v1)."""
     token, cid = await _auth()
-    return await get_client().get_json(
+    rows = await get_client().get_json(
         f"/characters/{cid}/industry/jobs/",
         params={"include_completed": str(include_completed).lower()},
         auth_token=token,
     )
+    return capped(rows, limit=tool_limit(limit), extra={"character_id": cid})

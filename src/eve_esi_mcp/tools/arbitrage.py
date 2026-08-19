@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..ids import GLOBAL_MARKET_REGION_ID, is_global_market_type
 from ..ids import hub as hub_info
 from .market import best_bid_ask
 from .universe import jumps_between
@@ -16,6 +17,24 @@ async def compare_hubs(
     Surfaces the richest and thinnest markets at a glance, plus the jump distance
     between the cheapest seller and richest buyer.
     """
+    # Globally-traded items (PLEX) share one order book across the cluster, so a
+    # hub comparison is meaningless — every hub would return identical numbers.
+    if is_global_market_type(type_id):
+        snap = await best_bid_ask(region=GLOBAL_MARKET_REGION_ID, type_id=type_id)
+        return {
+            "type_id": type_id,
+            "rows": [{"hub": "global", "region": "Global", **snap}],
+            "cheapest_sell_hub": "global",
+            "richest_buy_hub": "global",
+            "gross_spread_isk": None,
+            "gross_spread_pct": None,
+            "jumps_cheapest_to_richest": None,
+            "note": (
+                f"type_id {type_id} trades on the single global market (region "
+                f"{GLOBAL_MARKET_REGION_ID}). There is no inter-hub spread to arbitrage."
+            ),
+        }
+
     hubs = hubs or ["jita", "amarr", "dodixie", "rens", "hek"]
     rows: list[dict[str, Any]] = []
     for h in hubs:
