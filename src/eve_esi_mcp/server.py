@@ -92,6 +92,8 @@ def build_server() -> FastMCP:
     mcp.tool(universe.list_regions)
     mcp.tool(universe.route)
     mcp.tool(universe.jumps_between)
+    # Authenticated, so it lives in `character` — see its docstring.
+    mcp.tool(character.structure_info)
 
     # Activity
     mcp.tool(activity.system_kills)

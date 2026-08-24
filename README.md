@@ -186,6 +186,25 @@ These require a logged-in character. Register a developer app at
   a **copy** with that many runs left. The envelope carries `corporation_id`
   alongside `character_id`, and a blueprint in a corp hangar never appears in
   `my_blueprints`, so the two can be summed without double-counting.
+- `structure_info(structure_id, character?)` — name, solar system, owner and
+  type of an Upwell **structure** (citadel, engineering complex). Needs
+  `esi-universe.read_structures.v1` *and* docking access at that structure.
+
+  It is a character tool despite naming a universe object, because it is the
+  only lookup of one that needs a token — grouping by what a tool *needs* beats
+  grouping by what it describes, so a reader of the universe tools can assume
+  none of them fail on permissions. It exists because every other endpoint
+  reports a citadel as a bare `location_id` and `resolve_names` leaves it
+  unresolved: a player structure's name is visible only to pilots its owner
+  lets dock.
+
+  Its two requirements fail differently and are reported differently: a missing
+  **scope** is a structured `missing_scope` error returned before any request
+  (fix by re-authorizing), while a 403 past that check can only mean no docking
+  access and comes back as `no_access` — permanent for that character, so stop
+  retrying it. Docking access is **per character**: a `no_access` from one
+  character does not mean another logged-in character cannot read it, so sweep
+  each in turn.
 
 > **Existing logins need to re-authorize.** A stored token does not gain new
 > scopes when it refreshes — the saved scope string is preserved — so any
@@ -194,6 +213,14 @@ These require a logged-in character. Register a developer app at
 > never acquire it on its own. Run `sso_login` (or `sso_login_start` /
 > `sso_login_finish`) again per character. `sso_status()` lists each
 > character's granted scopes if you want to check first.
+
+> **`structure_info` needs its scope requested explicitly.**
+> `esi-universe.read_structures.v1` is *not* in the built-in default set, so
+> `sso_login()` with no argument will not grant it. Either set `EVE_SSO_SCOPES`
+> to the default string plus `esi-universe.read_structures.v1` before logging
+> in, or pass the scopes explicitly to `sso_login(scopes=...)`. Without one of
+> those, `structure_info` returns `missing_scope` for every character no matter
+> how many times you re-authorize.
 
 ### Multiple characters
 
