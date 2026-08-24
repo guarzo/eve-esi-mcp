@@ -160,3 +160,26 @@ async def test_the_ids_the_caller_passed_win_over_anything_in_esis_body():
 
     assert out["structure_id"] == 1044752365771
     assert out["character_id"] == 95000105
+
+
+# ---- wiring --------------------------------------------------------------
+
+
+def test_the_default_scope_set_requests_structure_reads():
+    """Without this in the DEFAULT set, the tool's own `missing_scope` message
+    is a dead end: it tells the operator to run `sso_login` to acquire the
+    scope, and a bare `sso_login()` reads this string, so they would
+    re-authorize and get `missing_scope` again."""
+    from eve_esi_mcp.config import get_settings
+
+    assert "esi-universe.read_structures.v1" in get_settings().sso_scopes
+
+
+async def test_the_structure_tool_is_registered_on_the_server():
+    """A tool that exists but is never registered is unreachable over stdio,
+    which is the only way eve-indy talks to this server."""
+    from eve_esi_mcp.server import build_server
+
+    tool = await build_server().get_tool("structure_info")
+
+    assert tool.name == "structure_info"
