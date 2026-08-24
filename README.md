@@ -156,6 +156,15 @@ These require a logged-in character. Register a developer app at
   `my_wallet_transactions(character?, limit?, complete?)`,
   `my_assets(character?, limit?, complete?)`, `my_open_orders(character?, limit?, complete?)`,
   `my_skills(character?)`, `my_industry_jobs(character?, include_completed?, limit?, complete?)`
+- `my_blueprints(character?, limit?, complete?)` — blueprints the character
+  owns. Needs `esi-characters.read_blueprints.v1`. Answers what `my_assets`
+  cannot: there a blueprint is only a type_id and a quantity, so ten rows of
+  one formula could be ten originals or a single ten-run copy stack. Here
+  `runs = -1` is an **original** and `runs > 0` is a **copy** with that many
+  runs left, which is the difference between "I can install this again" and
+  "I cannot". Carries `material_efficiency` / `time_efficiency` too, for
+  costing the blueprint that will actually be installed. A blueprint appears
+  in both this and `my_assets`, so callers summing stock must not add them.
 - `my_corp_assets(character?, limit?, complete?)` — assets owned by the
   character's **corporation**. Needs `esi-assets.read_corporation_assets.v1`
   *and* the in-game **Director** role. The envelope carries `corporation_id`
