@@ -176,13 +176,24 @@ These require a logged-in character. Register a developer app at
   **scope** returns a structured `missing_scope` error before any request, so
   it is never confused with a missing **role**, which arrives from ESI as a
   403 and cannot be predicted (roles are not exposed anywhere).
+- `my_corp_blueprints(character?, limit?, complete?)` — blueprints owned by
+  the character's **corporation**. Needs `esi-corporations.read_blueprints.v1`
+  *and* the in-game **Director** role, split the same way `my_corp_assets`
+  splits its two requirements. Exists because `my_corp_assets` cannot answer
+  whether a corp-held blueprint can be installed again: there it is only a
+  type_id and a quantity, so ten rows of one formula could be ten originals or
+  a single ten-run copy. Here `runs = -1` is an **original** and `runs > 0` is
+  a **copy** with that many runs left. The envelope carries `corporation_id`
+  alongside `character_id`, and a blueprint in a corp hangar never appears in
+  `my_blueprints`, so the two can be summed without double-counting.
 
 > **Existing logins need to re-authorize.** A stored token does not gain new
 > scopes when it refreshes — the saved scope string is preserved — so any
-> character logged in before `esi-assets.read_corporation_assets.v1` was added
-> to the default set will never acquire it on its own. Run `sso_login` (or
-> `sso_login_start` / `sso_login_finish`) again per character. `sso_status()`
-> lists each character's granted scopes if you want to check first.
+> character logged in before `esi-assets.read_corporation_assets.v1` or
+> `esi-corporations.read_blueprints.v1` was added to the default set will
+> never acquire it on its own. Run `sso_login` (or `sso_login_start` /
+> `sso_login_finish`) again per character. `sso_status()` lists each
+> character's granted scopes if you want to check first.
 
 ### Multiple characters
 
