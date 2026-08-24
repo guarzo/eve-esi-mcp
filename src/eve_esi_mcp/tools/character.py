@@ -13,8 +13,19 @@ from ..sso import CharacterSelectionError, get_valid_access_token, resolve_chara
 MAX_CURSOR_PAGES = 100
 
 
-async def _auth(character: int | str | None = None) -> tuple[str, int]:
-    """Access token + character_id for the selected character."""
+CORP_ASSETS_SCOPE = "esi-assets.read_corporation_assets.v1"
+
+
+async def _auth(character: int | str | None = None) -> tuple[str, int, frozenset[str]]:
+    """Access token, character_id, and GRANTED SCOPES for the selected character.
+
+    The scopes come back because a token's own scope set is the only way to
+    tell a permission the operator can fix (re-run SSO) from one they cannot
+    (a missing in-game role). ESI reports both as 403, and a caller that cannot
+    distinguish them writes off a corporation permanently for what is really a
+    stale token. Resolved here rather than re-read per tool so it costs the one
+    `resolve_character` call this function already makes.
+    """
     rec = await resolve_character(character)
     token = await get_valid_access_token(rec["character_id"])
     if not token:
@@ -29,7 +40,7 @@ async def _auth(character: int | str | None = None) -> tuple[str, int]:
                 "available_characters": [],
             }
         )
-    return token, int(rec["character_id"])
+    return token, int(rec["character_id"]), frozenset((rec.get("scope") or "").split())
 
 
 def _rows(
@@ -47,7 +58,7 @@ def _rows(
 async def my_wallet(character: int | str | None = None) -> dict[str, Any]:
     """Wallet balance (requires esi-wallet.read_character_wallet.v1)."""
     try:
-        token, cid = await _auth(character)
+        token, cid, _scopes = await _auth(character)
     except CharacterSelectionError as e:
         return e.detail
     balance = await get_client().get_json(
@@ -67,7 +78,7 @@ async def my_wallet_journal(
     untruncated, for callers that ingest this rather than read it.
     """
     try:
-        token, cid = await _auth(character)
+        token, cid, _scopes = await _auth(character)
     except CharacterSelectionError as e:
         return e.detail
     rows = await get_client().get_all_pages(
@@ -89,7 +100,7 @@ async def my_wallet_transactions(
     `complete=True` to walk the cursor back through everything ESI retains.
     """
     try:
-        token, cid = await _auth(character)
+        token, cid, _scopes = await _auth(character)
     except CharacterSelectionError as e:
         return e.detail
 
@@ -135,7 +146,7 @@ async def my_assets(
     default; the envelope reports the true total. Set `complete=True` for all of it.
     """
     try:
-        token, cid = await _auth(character)
+        token, cid, _scopes = await _auth(character)
     except CharacterSelectionError as e:
         return e.detail
     rows = await get_client().get_all_pages(
@@ -152,8 +163,19 @@ async def my_corp_assets(
     """Assets owned by the character's CORPORATION.
 
     Requires esi-assets.read_corporation_assets.v1 AND the in-game **Director**
-    role (ESI `x-required-roles`). Scope without the role is a 403, so a caller
-    cannot know in advance whether this will work — it has to try.
+    role (ESI `x-required-roles`). Both failures arrive from ESI as a 403 and
+    they need opposite responses, so this tool separates them:
+
+      * missing SCOPE -> returned here as a structured `missing_scope` error,
+        BEFORE any request. The token already tells us, so spending a 403
+        against ESI's error budget to rediscover it is waste — and a caller
+        classifying by status text would read it as a missing role and write
+        the corporation off permanently, when re-running SSO would fix it.
+        Adding the scope to the default set does not help an existing token:
+        `_refresh` preserves the stored scope string, so a token issued before
+        this feature never acquires it without a fresh login.
+      * missing ROLE -> a real 403 from ESI, which the caller cannot avoid and
+        must handle. Nothing here can predict it: roles are not exposed.
 
     Disjoint from `my_assets`: an item in a corp hangar is corp-owned and never
     appears in the character's own asset list, so the two can be summed without
@@ -164,9 +186,21 @@ async def my_corp_assets(
     character happened to have the role.
     """
     try:
-        token, cid = await _auth(character)
+        token, cid, scopes = await _auth(character)
     except CharacterSelectionError as e:
         return e.detail
+    if CORP_ASSETS_SCOPE not in scopes:
+        return {
+            "error": "missing_scope",
+            "message": (
+                f"Character {cid} has no {CORP_ASSETS_SCOPE} scope. Existing "
+                f"tokens do not gain new scopes on refresh — run sso_login "
+                f"(or sso_login_start / sso_login_finish) for this character "
+                f"to re-authorize with it."
+            ),
+            "required_scope": CORP_ASSETS_SCOPE,
+            "character_id": cid,
+        }
     # Public endpoint, no auth and no scope — the corporation a character
     # belongs to is not privileged information.
     profile = await get_client().get_json(f"/characters/{cid}/")
@@ -184,7 +218,7 @@ async def my_open_orders(
 ) -> dict[str, Any]:
     """Open market orders (requires esi-markets.read_character_orders.v1)."""
     try:
-        token, cid = await _auth(character)
+        token, cid, _scopes = await _auth(character)
     except CharacterSelectionError as e:
         return e.detail
     rows = await get_client().get_json(f"/characters/{cid}/orders/", auth_token=token)
@@ -195,7 +229,7 @@ async def my_skills(character: int | str | None = None) -> dict[str, Any]:
     """Trained skills (requires esi-skills.read_skills.v1). Filter Accounting /
     Broker Relations / hauling skills to plug into arbitrage math."""
     try:
-        token, cid = await _auth(character)
+        token, cid, _scopes = await _auth(character)
     except CharacterSelectionError as e:
         return e.detail
     data = await get_client().get_json(f"/characters/{cid}/skills/", auth_token=token)
@@ -214,7 +248,7 @@ async def my_industry_jobs(
     longer history has to be accumulated and stored by the caller.
     """
     try:
-        token, cid = await _auth(character)
+        token, cid, _scopes = await _auth(character)
     except CharacterSelectionError as e:
         return e.detail
     rows = await get_client().get_json(

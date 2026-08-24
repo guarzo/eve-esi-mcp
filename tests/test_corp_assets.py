@@ -139,6 +139,54 @@ async def test_it_returns_the_structured_error_when_the_character_is_ambiguous()
     assert result["error"] == "ambiguous_character"
 
 
+async def test_a_token_without_the_corp_scope_is_told_to_re_login():
+    """A missing SCOPE and a missing Director ROLE both surface as 403 from
+    ESI, and they need opposite responses: one is fixed by re-running SSO, the
+    other cannot be fixed by the operator at all.
+
+    Consumers classify by status text, so an unscoped token's 403 reads as
+    "no Director" -- writing off a corporation permanently when a re-login
+    would have fixed it. Adding a scope does not retroactively grant it either:
+    `_refresh` preserves the old scope string, so a token issued before this
+    feature never acquires it on its own.
+
+    Caught before the request, not after: the token already tells us, and
+    spending a 403 against ESI's error budget to learn it is waste.
+    """
+    from eve_esi_mcp.tools.character import my_corp_assets
+
+    _add(1001, "Alice", scope="esi-wallet.read_character_wallet.v1")
+    # assert_all_called=False: the route below is declared precisely so it can
+    # be shown NOT to fire. respx's default would fail the test for the very
+    # behaviour under test.
+    with respx.mock(base_url="https://esi.evetech.net",
+                    assert_all_called=False) as router:
+        route = router.get("/characters/1001/")
+        result = await my_corp_assets(complete=True)
+
+    assert not route.called, "no ESI call should be made without the scope"
+    assert result["error"] == "missing_scope"
+    assert CORP_SCOPE in result["required_scope"]
+    assert "sso_login" in result["message"]
+
+
+async def test_a_scoped_token_still_reaches_esi():
+    """The guard must not swallow the working case."""
+    from eve_esi_mcp.tools.character import my_corp_assets
+
+    _add(1001, "Alice")  # default scope in this module IS the corp scope
+    with respx.mock(base_url="https://esi.evetech.net") as router:
+        router.get("/characters/1001/").mock(
+            return_value=httpx.Response(200, json={"corporation_id": 98000001})
+        )
+        router.get("/corporations/98000001/assets/").mock(
+            return_value=httpx.Response(200, json=[{"item_id": 5}])
+        )
+        result = await my_corp_assets(complete=True)
+
+    assert result["corporation_id"] == 98000001
+
+
 # ---- wiring --------------------------------------------------------------
 
 
