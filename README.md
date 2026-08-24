@@ -156,6 +156,24 @@ These require a logged-in character. Register a developer app at
   `my_wallet_transactions(character?, limit?, complete?)`,
   `my_assets(character?, limit?, complete?)`, `my_open_orders(character?, limit?, complete?)`,
   `my_skills(character?)`, `my_industry_jobs(character?, include_completed?, limit?, complete?)`
+- `my_corp_assets(character?, limit?, complete?)` — assets owned by the
+  character's **corporation**. Needs `esi-assets.read_corporation_assets.v1`
+  *and* the in-game **Director** role. The envelope carries `corporation_id`
+  alongside `character_id`. Disjoint from `my_assets` — corp-owned items never
+  appear in a character's own asset list, so the two can be summed without
+  double-counting.
+
+  The two requirements fail differently and the tool separates them: a missing
+  **scope** returns a structured `missing_scope` error before any request, so
+  it is never confused with a missing **role**, which arrives from ESI as a
+  403 and cannot be predicted (roles are not exposed anywhere).
+
+> **Existing logins need to re-authorize.** A stored token does not gain new
+> scopes when it refreshes — the saved scope string is preserved — so any
+> character logged in before `esi-assets.read_corporation_assets.v1` was added
+> to the default set will never acquire it on its own. Run `sso_login` (or
+> `sso_login_start` / `sso_login_finish`) again per character. `sso_status()`
+> lists each character's granted scopes if you want to check first.
 
 ### Multiple characters
 
