@@ -208,19 +208,12 @@ These require a logged-in character. Register a developer app at
 
 > **Existing logins need to re-authorize.** A stored token does not gain new
 > scopes when it refreshes — the saved scope string is preserved — so any
-> character logged in before `esi-assets.read_corporation_assets.v1` or
-> `esi-corporations.read_blueprints.v1` was added to the default set will
-> never acquire it on its own. Run `sso_login` (or `sso_login_start` /
-> `sso_login_finish`) again per character. `sso_status()` lists each
-> character's granted scopes if you want to check first.
-
-> **`structure_info` needs its scope requested explicitly.**
-> `esi-universe.read_structures.v1` is *not* in the built-in default set, so
-> `sso_login()` with no argument will not grant it. Either set `EVE_SSO_SCOPES`
-> to the default string plus `esi-universe.read_structures.v1` before logging
-> in, or pass the scopes explicitly to `sso_login(scopes=...)`. Without one of
-> those, `structure_info` returns `missing_scope` for every character no matter
-> how many times you re-authorize.
+> character logged in before `esi-assets.read_corporation_assets.v1`,
+> `esi-corporations.read_blueprints.v1` or `esi-universe.read_structures.v1`
+> was added to the default set will never acquire it on its own. Run
+> `sso_login` (or `sso_login_start` / `sso_login_finish`) again per character.
+> `sso_status()` lists each character's granted scopes if you want to check
+> first.
 
 ### Multiple characters
 
