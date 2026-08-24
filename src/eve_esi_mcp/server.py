@@ -122,5 +122,6 @@ def build_server() -> FastMCP:
     mcp.tool(character.my_open_orders)
     mcp.tool(character.my_skills)
     mcp.tool(character.my_industry_jobs)
+    mcp.tool(character.my_blueprints)
 
     return mcp

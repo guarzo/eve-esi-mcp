@@ -14,6 +14,7 @@ MAX_CURSOR_PAGES = 100
 
 
 CORP_ASSETS_SCOPE = "esi-assets.read_corporation_assets.v1"
+BLUEPRINTS_SCOPE = "esi-characters.read_blueprints.v1"
 
 
 async def _auth(character: int | str | None = None) -> tuple[str, int, frozenset[str]]:
@@ -209,6 +210,61 @@ async def my_corp_assets(
         f"/corporations/{corp_id}/assets/", auth_token=token
     )
     return {**_rows(rows, cid, limit, complete), "corporation_id": corp_id}
+
+
+async def my_blueprints(
+    character: int | str | None = None,
+    limit: int | None = None,
+    complete: bool = False,
+) -> dict[str, Any]:
+    """Blueprints the character owns (requires esi-characters.read_blueprints.v1).
+
+    Exists because the ASSET list cannot answer the only question that matters
+    about a blueprint: whether it can be installed again tomorrow. `/assets/`
+    reports a blueprint as a type_id and a quantity and stops there, so ten
+    rows of one formula could be ten originals that run forever or a single
+    ten-run copy stack that is gone once consumed. Anything gating "can I start
+    this job" on the asset count is guessing.
+
+    This endpoint carries the distinction ESI encodes in two fields:
+
+      * `runs` = -1 means an ORIGINAL (BPO): infinite runs, and one job at a
+        time per copy of it.
+      * `runs` > 0 means a COPY (BPC) with exactly that many runs left.
+      * `quantity` = -1 marks a single stacked-as-one item, -2 marks a BPC;
+        a positive quantity is a stack of that many.
+
+    `material_efficiency` / `time_efficiency` come along because a caller
+    costing a job needs the ME of the blueprint it will actually install, not
+    the ME it assumed.
+
+    Missing SCOPE is returned as a structured error BEFORE any request, for
+    the reason my_corp_assets spells out: the token already tells us, and
+    spending a 403 against ESI's error budget to rediscover it is waste. Note
+    that adding this scope to the default set does NOT help an existing token
+    — `_refresh` preserves the stored scope string, so every character issued
+    a token before this tool existed must re-run SSO to acquire it.
+    """
+    try:
+        token, cid, scopes = await _auth(character)
+    except CharacterSelectionError as e:
+        return e.detail
+    if BLUEPRINTS_SCOPE not in scopes:
+        return {
+            "error": "missing_scope",
+            "message": (
+                f"Character {cid} has no {BLUEPRINTS_SCOPE} scope. Existing "
+                f"tokens do not gain new scopes on refresh — run sso_login "
+                f"(or sso_login_start / sso_login_finish) for this character "
+                f"to re-authorize with it."
+            ),
+            "required_scope": BLUEPRINTS_SCOPE,
+            "character_id": cid,
+        }
+    rows = await get_client().get_all_pages(
+        f"/characters/{cid}/blueprints/", auth_token=token
+    )
+    return _rows(rows, cid, limit, complete)
 
 
 async def my_open_orders(
