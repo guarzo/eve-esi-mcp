@@ -144,6 +144,39 @@ async def my_assets(
     return _rows(rows, cid, limit, complete)
 
 
+async def my_corp_assets(
+    character: int | str | None = None,
+    limit: int | None = None,
+    complete: bool = False,
+) -> dict[str, Any]:
+    """Assets owned by the character's CORPORATION.
+
+    Requires esi-assets.read_corporation_assets.v1 AND the in-game **Director**
+    role (ESI `x-required-roles`). Scope without the role is a 403, so a caller
+    cannot know in advance whether this will work — it has to try.
+
+    Disjoint from `my_assets`: an item in a corp hangar is corp-owned and never
+    appears in the character's own asset list, so the two can be summed without
+    double-counting.
+
+    The envelope carries `corporation_id` as well as `character_id`, because a
+    corp snapshot must be keyed on the corporation rather than on whichever
+    character happened to have the role.
+    """
+    try:
+        token, cid = await _auth(character)
+    except CharacterSelectionError as e:
+        return e.detail
+    # Public endpoint, no auth and no scope — the corporation a character
+    # belongs to is not privileged information.
+    profile = await get_client().get_json(f"/characters/{cid}/")
+    corp_id = int(profile["corporation_id"])
+    rows = await get_client().get_all_pages(
+        f"/corporations/{corp_id}/assets/", auth_token=token
+    )
+    return {**_rows(rows, cid, limit, complete), "corporation_id": corp_id}
+
+
 async def my_open_orders(
     character: int | str | None = None,
     limit: int | None = None,

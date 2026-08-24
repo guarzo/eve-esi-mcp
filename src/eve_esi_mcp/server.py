@@ -118,6 +118,7 @@ def build_server() -> FastMCP:
     mcp.tool(character.my_wallet_journal)
     mcp.tool(character.my_wallet_transactions)
     mcp.tool(character.my_assets)
+    mcp.tool(character.my_corp_assets)
     mcp.tool(character.my_open_orders)
     mcp.tool(character.my_skills)
     mcp.tool(character.my_industry_jobs)

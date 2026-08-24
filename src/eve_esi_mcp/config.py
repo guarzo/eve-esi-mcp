@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     sso_callback_port: int = Field(default=8765, alias="EVE_SSO_CALLBACK_PORT")
     sso_scopes: str = Field(
         default="esi-wallet.read_character_wallet.v1 esi-assets.read_assets.v1 "
+        "esi-assets.read_corporation_assets.v1 "
         "esi-markets.read_character_orders.v1 esi-skills.read_skills.v1 "
         "esi-industry.read_character_jobs.v1",
         alias="EVE_SSO_SCOPES",

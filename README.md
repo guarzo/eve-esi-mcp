@@ -156,6 +156,12 @@ These require a logged-in character. Register a developer app at
   `my_wallet_transactions(character?, limit?, complete?)`,
   `my_assets(character?, limit?, complete?)`, `my_open_orders(character?, limit?, complete?)`,
   `my_skills(character?)`, `my_industry_jobs(character?, include_completed?, limit?, complete?)`
+- `my_corp_assets(character?, limit?, complete?)` — assets owned by the
+  character's **corporation**. Needs `esi-assets.read_corporation_assets.v1`
+  *and* the in-game **Director** role; scope without the role is a 403. The
+  envelope carries `corporation_id` alongside `character_id`. Disjoint from
+  `my_assets` — corp-owned items never appear in a character's own asset list,
+  so the two can be summed without double-counting.
 
 ### Multiple characters
 
