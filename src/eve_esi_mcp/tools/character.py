@@ -16,6 +16,7 @@ MAX_CURSOR_PAGES = 100
 CORP_ASSETS_SCOPE = "esi-assets.read_corporation_assets.v1"
 CORP_BLUEPRINTS_SCOPE = "esi-corporations.read_blueprints.v1"
 BLUEPRINTS_SCOPE = "esi-characters.read_blueprints.v1"
+STRUCTURES_SCOPE = "esi-universe.read_structures.v1"
 
 
 async def _auth(character: int | str | None = None) -> tuple[str, int, frozenset[str]]:
@@ -367,3 +368,59 @@ async def my_industry_jobs(
         auth_token=token,
     )
     return _rows(rows, cid, limit, complete)
+
+
+async def structure_info(
+    structure_id: int,
+    character: int | str | None = None,
+) -> dict[str, Any]:
+    """Name, solar system, owner and type of an Upwell structure.
+
+    Lives here rather than in `universe` despite naming a universe object:
+    everything in that module is unauthenticated, and this needs a token, a
+    scope pre-check and `_auth`. Grouping by what a tool NEEDS beats grouping
+    by what it describes -- a reader of universe.py should be able to assume
+    nothing there can fail on permissions.
+
+    Requires esi-universe.read_structures.v1 AND docking access. Both arrive
+    from ESI as 403 and need opposite responses from the operator (re-authorize
+    versus nothing they can do), so the missing SCOPE is answered structurally
+    before any request, exactly as my_corp_blueprints does, and only a missing
+    ACCESS reaches ESI.
+    """
+    try:
+        token, cid, scopes = await _auth(character)
+    except CharacterSelectionError as e:
+        return e.detail
+    if STRUCTURES_SCOPE not in scopes:
+        return {
+            "error": "missing_scope",
+            "message": (
+                f"Character {cid} has no {STRUCTURES_SCOPE} scope. "
+                f"Existing tokens do not gain new scopes on refresh — run "
+                f"sso_login (or sso_login_start / sso_login_finish) for this "
+                f"character to re-authorize with it."
+            ),
+            "required_scope": STRUCTURES_SCOPE,
+            "character_id": cid,
+        }
+    try:
+        info = await get_client().get_json(
+            f"/universe/structures/{structure_id}/", auth_token=token
+        )
+    except ESIError as e:
+        # A 403 HERE is docking access, not scope: the check above already
+        # cleared that. Reported as its own error so a caller can stop retrying
+        # this structure rather than treating it as transient.
+        if e.status == 403:
+            return {
+                "error": "no_access",
+                "message": (
+                    f"Character {cid} cannot dock at structure "
+                    f"{structure_id}, so its name is not readable."
+                ),
+                "structure_id": structure_id,
+                "character_id": cid,
+            }
+        raise
+    return {**info, "structure_id": structure_id, "character_id": cid}
