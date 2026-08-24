@@ -14,6 +14,7 @@ MAX_CURSOR_PAGES = 100
 
 
 CORP_ASSETS_SCOPE = "esi-assets.read_corporation_assets.v1"
+CORP_BLUEPRINTS_SCOPE = "esi-corporations.read_blueprints.v1"
 BLUEPRINTS_SCOPE = "esi-characters.read_blueprints.v1"
 
 
@@ -208,6 +209,59 @@ async def my_corp_assets(
     corp_id = int(profile["corporation_id"])
     rows = await get_client().get_all_pages(
         f"/corporations/{corp_id}/assets/", auth_token=token
+    )
+    return {**_rows(rows, cid, limit, complete), "corporation_id": corp_id}
+
+
+async def my_corp_blueprints(
+    character: int | str | None = None,
+    limit: int | None = None,
+    complete: bool = False,
+) -> dict[str, Any]:
+    """Blueprints owned by the character's CORPORATION.
+
+    Requires esi-corporations.read_blueprints.v1 AND the in-game **Director**
+    role (ESI `x-required-roles`), and separates the two failures for the same
+    reason `my_corp_assets` does: both arrive as 403, one is fixed by re-running
+    SSO and the other never resolves without an in-game role change.
+
+    Exists because `my_corp_assets` CANNOT answer whether a corp-held blueprint
+    can be installed. There a blueprint is a type_id and a quantity, so a stack
+    of ten is either ten originals that run forever or one ten-run copy. `runs`
+    is the distinction: -1 an ORIGINAL, a positive count a COPY with that many
+    runs left. `quantity` encodes its own: -1 a singleton, -2 a copy, positive
+    a stack of that many.
+
+    Disjoint from `my_blueprints`: a blueprint in a corp hangar is corp-owned
+    and never appears in the character's own list, so the two can be summed
+    without double-counting.
+
+    The envelope carries `corporation_id` as well as `character_id`, because a
+    corp snapshot must key on the corporation rather than on whichever
+    character happened to hold the role.
+    """
+    try:
+        token, cid, scopes = await _auth(character)
+    except CharacterSelectionError as e:
+        return e.detail
+    if CORP_BLUEPRINTS_SCOPE not in scopes:
+        return {
+            "error": "missing_scope",
+            "message": (
+                f"Character {cid} has no {CORP_BLUEPRINTS_SCOPE} scope. "
+                f"Existing tokens do not gain new scopes on refresh — run "
+                f"sso_login (or sso_login_start / sso_login_finish) for this "
+                f"character to re-authorize with it."
+            ),
+            "required_scope": CORP_BLUEPRINTS_SCOPE,
+            "character_id": cid,
+        }
+    # Public endpoint, no auth and no scope — the corporation a character
+    # belongs to is not privileged information.
+    profile = await get_client().get_json(f"/characters/{cid}/")
+    corp_id = int(profile["corporation_id"])
+    rows = await get_client().get_all_pages(
+        f"/corporations/{corp_id}/blueprints/", auth_token=token
     )
     return {**_rows(rows, cid, limit, complete), "corporation_id": corp_id}
 
